@@ -683,7 +683,13 @@
     if (stream) return;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+  facingMode: { ideal: "environment" },
+  width: { ideal: 1920 },
+  height: { ideal: 1080 },
+  frameRate: { ideal: 30, max: 60 },
+  focusMode: "continuous"
+},
         audio: false
       });
       video.srcObject = stream;
@@ -747,7 +753,7 @@
   function startAutoLoop() {
     if (scanTimer) return;
     // scan about every 120ms
-    scanTimer = setInterval(scanOnce, 120);
+    scanTimer = setInterval(scanOnce, 50);
   }
   function stopAutoLoop() {
     if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
