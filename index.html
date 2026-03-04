@@ -752,7 +752,7 @@ video: {
   function startAutoLoop() {
     if (scanTimer) return;
     // scan about every 120ms
-    scanTimer = setInterval(scanOnce, 50);
+    scanTimer = setInterval(scanOnce, 40);
   }
   function stopAutoLoop() {
     if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
