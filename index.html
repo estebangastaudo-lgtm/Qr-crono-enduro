@@ -65,7 +65,7 @@
 
     .rline{
       display:grid;
-      grid-template-columns: 1fr 110px 44px 44px 90px; /* Nombre | Tag | ↑ | ↓ | Borrar */
+      grid-template-columns: 1fr 110px 44px 44px 90px;
       gap:8px;
       align-items:center;
     }
@@ -109,7 +109,7 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>📷⏱️ Cronómetro Enduro — Automático por QR (Android recomendado)</h1>
+      <h1>📷⏱️ Cronómetro Enduro — Automático por QR (A51)</h1>
 
       <div class="topgrid">
         <div>
@@ -126,14 +126,16 @@
             <div class="camRow">
               <span class="pill" id="qrSupport">Detector QR: …</span>
               <span class="pill" id="camState">Cámara: apagada</span>
-              <label style="font-size:12px; opacity:.85;">Cooldown QR (seg)
+              <label style="font-size:12px; opacity:.85;">Cooldown (seg)
                 <input id="cooldownSec" type="number" min="1" step="1" value="5" style="width:90px; margin-left:8px;">
+              </label>
+              <label style="font-size:12px; opacity:.85;">Zoom (x)
+                <input id="zoomX" type="number" min="1" step="0.5" value="2" style="width:80px; margin-left:8px;">
               </label>
             </div>
             <video id="video" playsinline muted></video>
             <div class="note">
-              Consejo: poné el celu a 2–3m, sin sol directo, y que el porta-número pase por la puerta bien “de frente”.<br>
-              Este modo usa <b>QR</b> (por compatibilidad y rendimiento en Android). Si querés AprilTag real, ahí sí hay que meter una librería pesada.
+              Tips: poné el celu a 2–3m, sin sol directo. Si ves “ojo de pez”, subí el <b>Zoom</b> a 2x o 2.5x.
             </div>
           </div>
 
@@ -156,16 +158,16 @@
               <input id="gap" type="number" min="0" step="1" value="15" />
             </div>
             <div>
-              <label>Anti doble-tap (ms)</label>
-              <input id="dblMs" type="number" min="0" step="100" value="0" />
-            </div>
-            <div>
               <label>Parciales</label>
               <select id="sectors">
                 <option value="0" selected>OFF (solo vuelta)</option>
                 <option value="2">ON (2 parciales)</option>
                 <option value="3">ON (3 parciales)</option>
               </select>
+            </div>
+            <div>
+              <label>Anti doble-tap (ms)</label>
+              <input id="dblMs" type="number" min="0" step="100" value="0" />
             </div>
           </div>
 
@@ -178,7 +180,7 @@
 
           <div class="note">
             <b>NETO</b> = tiempo total - offset de largada (offset = posición * gap).<br/>
-            Auto por QR: cuando se detecta el código, se marca vuelta del piloto asociado.
+            Auto QR: cuando se detecta el código, se marca vuelta del piloto asociado.
           </div>
         </div>
       </div>
@@ -192,7 +194,7 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const STORAGE_KEY = "cronometro_enduro_autoQR_v1";
+  const STORAGE_KEY = "cronometro_enduro_autoQR_v2";
 
   const DEFAULT_NAMES = ["Esteban","Guille","Ariel","Richard","Gera","Fran","Ale","Franco"];
   const DEFAULT_TAGS  = ["P1","P2","P3","P4","P5","P6","P7","P8"];
@@ -211,6 +213,7 @@
   const elDblMs = $("dblMs");
   const elSectors = $("sectors");
   const elCooldownSec = $("cooldownSec");
+  const elZoomX = $("zoomX");
 
   const ridersStatus = $("ridersStatus");
   const ridersList = $("ridersList");
@@ -228,15 +231,16 @@
   let elapsedMs = 0;
   let rafId = null;
 
-  let riders = []; // {id,name,color,tag,events[],sectorIdx,lastTapEpoch,redo[]}
+  let riders = [];
 
   // Auto QR
   let autoOn = false;
   let stream = null;
   let detector = null;
   let scanTimer = null;
-  let lastSeen = {}; // tag -> epoch ms
+  let lastSeen = {};
   let videoVisible = true;
+  let videoTrack = null;
 
   function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(2, 8); }
 
@@ -258,8 +262,9 @@
   function nowElapsed() { return running ? (elapsedMs + (performance.now() - startPerf)) : elapsedMs; }
   function getGapMs() { return Math.max(0, Number(elGap.value || 0)) * 1000; }
   function getDblMs() { return Math.max(0, Number(elDblMs.value || 0)); }
-  function getSectors() { return Math.max(0, Number(elSectors.value || 0)); } // 0,2,3
+  function getSectors() { return Math.max(0, Number(elSectors.value || 0)); }
   function getCooldownMs() { return Math.max(500, Number(elCooldownSec.value || 5) * 1000); }
+  function getZoomX() { return Math.max(1, Number(elZoomX.value || 2)); }
 
   function offsetMsFor(idx) { return idx * getGapMs(); }
   function totalNetMs(idx, totalMs) { return Math.max(0, totalMs - offsetMsFor(idx)); }
@@ -329,7 +334,7 @@
 
   function renderConfigList() {
     ridersList.innerHTML = "";
-    const tagOptions = DEFAULT_TAGS; // P1..P8 (podés escribir otro si querés)
+    const tagOptions = DEFAULT_TAGS;
 
     riders.forEach((r, idx) => {
       const row = document.createElement("div");
@@ -356,7 +361,6 @@
 
       const tagSel = document.createElement("select");
       tagSel.style.width = "110px";
-      // Populate with P1..P8 plus current (if custom)
       const unique = [...new Set([...tagOptions, r.tag].filter(Boolean))];
       unique.forEach(t => {
         const o = document.createElement("option");
@@ -373,13 +377,11 @@
 
       const upBtn = document.createElement("button");
       upBtn.textContent = "↑";
-      upBtn.title = "Subir";
       upBtn.disabled = idx === 0;
       upBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); move(idx, -1); });
 
       const downBtn = document.createElement("button");
       downBtn.textContent = "↓";
-      downBtn.title = "Bajar";
       downBtn.disabled = idx === riders.length - 1;
       downBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); move(idx, +1); });
 
@@ -387,10 +389,7 @@
       delBtn.textContent = "Borrar";
       delBtn.classList.add("warn");
       delBtn.disabled = riders.length <= 1;
-      delBtn.addEventListener("click", (e) => {
-        e.preventDefault(); e.stopPropagation();
-        removeRider(idx);
-      });
+      delBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); removeRider(idx); });
 
       row.appendChild(nameWrap);
       row.appendChild(tagSel);
@@ -400,12 +399,6 @@
 
       ridersList.appendChild(row);
     });
-
-    const hint = document.createElement("div");
-    hint.innerHTML = `<small>Orden = orden de largada (offset). Tag = QR que tiene la moto (P1..P8). Podés reordenar con ↑ / ↓.</small>`;
-    hint.style.opacity = ".75";
-    hint.style.marginTop = "6px";
-    ridersList.appendChild(hint);
   }
 
   function renderTables() {
@@ -464,13 +457,12 @@
 
   function save() {
     const state = {
-      running,
       elapsedMs,
-      startedAtEpoch: running ? Date.now() : null,
       gapSec: Number(elGap.value || 0),
       dblMs: Number(elDblMs.value || 0),
       sectors: Number(elSectors.value || 0),
       cooldownSec: Number(elCooldownSec.value || 5),
+      zoomX: Number(elZoomX.value || 2),
       riders
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -485,6 +477,7 @@
       if (typeof s.dblMs === "number") elDblMs.value = String(s.dblMs);
       if (typeof s.sectors === "number") elSectors.value = String(s.sectors);
       if (typeof s.cooldownSec === "number") elCooldownSec.value = String(s.cooldownSec);
+      if (typeof s.zoomX === "number") elZoomX.value = String(s.zoomX);
 
       if (Array.isArray(s.riders) && s.riders.length) {
         riders = s.riders.map((r, i) => ({
@@ -500,7 +493,6 @@
       } else ensureDefaults();
 
       elapsedMs = Number(s.elapsedMs || 0);
-      if (s.running && s.startedAtEpoch) elapsedMs += Math.max(0, Date.now() - Number(s.startedAtEpoch));
       running = false;
     } catch { ensureDefaults(); }
   }
@@ -539,12 +531,11 @@
   }
 
   function mark(idx) {
-    // (manual tap is not used in this auto-only build, but we keep the logic)
     const tEpoch = Date.now();
     const dbl = getDblMs();
     const r = riders[idx];
+    if (dbl > 0 && (tEpoch - (r.lastTapEpoch || 0)) < dbl) return;
 
-    if (dbl > 0 && (tEpoch - (r.lastTapEpoch || 0)) < dbl) return; // no confirm in auto
     r.lastTapEpoch = tEpoch;
     r.redo = [];
 
@@ -672,43 +663,49 @@
     showToast("Exportado ✔");
   }
 
-  // ===== AUTO QR =====
   function updateSupportPills() {
     const ok = ("BarcodeDetector" in window);
     elQrSupport.textContent = ok ? "Detector QR: OK" : "Detector QR: NO (Chrome Android)";
     elQrSupport.className = "pill " + (ok ? "ok" : "bad");
   }
 
+  async function applyCameraTweaks() {
+    if (!videoTrack) return;
+    const zoomX = getZoomX();
+    try {
+      const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : null;
+      const adv = [{ focusMode: "continuous" }, { exposureMode: "continuous" }];
+      if (caps && caps.zoom) {
+        const z = Math.min(caps.zoom.max, Math.max(caps.zoom.min, zoomX));
+        adv.push({ zoom: z });
+      }
+      await videoTrack.applyConstraints({ advanced: adv });
+    } catch {}
+  }
+
   async function startCamera() {
     if (stream) return;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-video: {
-  facingMode: { ideal: "environment" },
-  width: { ideal: 1920 },
-  height: { ideal: 1080 }
-},
-        audio: false
-      });
-      video.srcObject = stream;
-      await video.play();
-      elCamState.textContent = "Cámara: ON";
-      elCamState.className = "pill ok";
-    } catch (e) {
-      elCamState.textContent = "Cámara: ERROR";
-      elCamState.className = "pill bad";
-      showToast("No pude abrir la cámara");
-      throw e;
-    }
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30, max: 60 }
+      },
+      audio: false
+    });
+    video.srcObject = stream;
+    videoTrack = stream.getVideoTracks()[0] || null;
+    await applyCameraTweaks();
+    await video.play();
+    elCamState.textContent = "Cámara: ON";
+    elCamState.className = "pill ok";
   }
 
   function stopCamera() {
     if (video) { try { video.pause(); } catch {} }
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
-    }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    videoTrack = null;
     elCamState.textContent = "Cámara: apagada";
     elCamState.className = "pill";
   }
@@ -721,14 +718,10 @@ video: {
   async function scanOnce() {
     if (!autoOn || !detector || !stream) return;
     try {
-      // BarcodeDetector can detect directly from video element in Chrome
       const barcodes = await detector.detect(video);
       if (!barcodes || !barcodes.length) return;
-
       const now = Date.now();
       const cooldown = getCooldownMs();
-
-      // take the first barcode
       const code = (barcodes[0].rawValue || "").trim();
       if (!code) return;
 
@@ -737,21 +730,15 @@ video: {
       lastSeen[code] = now;
 
       const idx = tagToIndex(code);
-      if (idx < 0) {
-        showToast(`QR ${code} sin piloto`);
-        return;
-      }
-      if (!running) start(); // auto-start timer if needed
+      if (idx < 0) return;
+      if (!running) start();
       mark(idx);
       showToast(`✓ ${riders[idx].name} (${code})`);
-    } catch (e) {
-      // ignore transient scan errors
-    }
+    } catch {}
   }
 
   function startAutoLoop() {
     if (scanTimer) return;
-    // scan about every 120ms
     scanTimer = setInterval(scanOnce, 40);
   }
   function stopAutoLoop() {
@@ -760,7 +747,7 @@ video: {
 
   async function startAuto() {
     if (!("BarcodeDetector" in window)) {
-      alert("Tu navegador no soporta Detector QR. En Samsung A51 usá Chrome actualizado.");
+      alert("Tu navegador no soporta Detector QR. Usá Chrome actualizado.");
       return;
     }
     detector = new BarcodeDetector({ formats: ["qr_code"] });
@@ -788,7 +775,6 @@ video: {
     showToast("AUTO QR OFF");
   }
 
-  // wiring
   btnStartPause.addEventListener("click", () => running ? pause() : start());
   btnStartAuto.addEventListener("click", startAuto);
   btnStopAuto.addEventListener("click", stopAuto);
@@ -809,6 +795,7 @@ video: {
   elGap.addEventListener("input", () => { renderAll(); save(); });
   elDblMs.addEventListener("input", () => { save(); });
   elCooldownSec.addEventListener("input", () => { save(); });
+  elZoomX.addEventListener("input", async () => { save(); await applyCameraTweaks(); });
 
   elSectors.addEventListener("change", () => { riders.forEach(r => { r.sectorIdx = 0; r.redo = []; }); renderAll(); save(); });
 
@@ -818,9 +805,6 @@ video: {
   updateSupportPills();
   btnToggleVideo.textContent = "Ocultar video";
   video.style.display = "block";
-
-  window.addEventListener("visibilitychange", () => save());
-  window.addEventListener("beforeunload", () => save());
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(()=>{}));

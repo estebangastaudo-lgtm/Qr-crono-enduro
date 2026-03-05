@@ -1,4 +1,4 @@
-const CACHE = "cronometro-enduro-autoQR-v1-1";
+const CACHE = "cronometro-enduro-autoQR-v2-0";
 const ASSETS = ["./", "./index.html", "./manifest.json", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
